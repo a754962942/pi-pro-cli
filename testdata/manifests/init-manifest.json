@@ -1,0 +1,10 @@
+{
+  "version": "0.0.0-dev",
+  "files": [
+    {
+      "path": "schemas/seeddance/v1/image-to-video.json",
+      "url": "/cli/files/schemas/seeddance/v1/image-to-video.json",
+      "sha256": "fixture-sha256"
+    }
+  ]
+}

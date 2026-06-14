@@ -1,0 +1,12 @@
+{
+  "jobId": "job_test_001",
+  "status": "succeeded",
+  "result": {
+    "artifacts": [
+      {
+        "kind": "video",
+        "url": "https://example.com/artifacts/job_test_001.mp4"
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "provider": "seeddance",
+  "model": "v1",
+  "type": "image-to-video",
+  "schemaVersion": "2026-06-14",
+  "artifactKind": "video",
+  "displayName": "SeedDance image to video",
+  "input": {
+    "properties": {
+      "image": {
+        "type": "file",
+        "required": true
+      },
+      "prompt": {
+        "type": "string",
+        "required": true
+      }
+    }
+  }
+}
