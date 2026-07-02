@@ -67,6 +67,36 @@ download() {
   curl -fsSL -o "$out" "$url"
 }
 
+profile_file() {
+  if [ -n "${PI_PRO_INSTALL_PROFILE:-}" ]; then
+    printf '%s\n' "$PI_PRO_INSTALL_PROFILE"
+    return
+  fi
+  case "${SHELL:-}" in
+    */zsh) printf '%s\n' "$HOME/.zshrc" ;;
+    */bash) printf '%s\n' "$HOME/.bashrc" ;;
+    *) printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+ensure_path() {
+  dir="$1"
+  export PATH="$dir:$PATH"
+
+  profile="$(profile_file)"
+  marker="# pi-pro PATH"
+  line="export PATH=\"$dir:\$PATH\""
+  if [ ! -f "$profile" ] || ! grep -F "$line" "$profile" >/dev/null 2>&1; then
+    {
+      printf '\n%s\n' "$marker"
+      printf '%s\n' "$line"
+    } >> "$profile"
+  fi
+  # shellcheck disable=SC1090
+  . "$profile" >/dev/null 2>&1 || true
+  echo "PATH profile updated: $profile"
+}
+
 need_command curl
 need_command awk
 need_command sed
@@ -124,12 +154,8 @@ chmod 755 "$tmp_file"
 mv "$tmp_file" "$target"
 trap - EXIT INT TERM
 
+ensure_path "$bin_dir"
+
 echo "installed: $target"
-case ":$PATH:" in
-  *":$bin_dir:"*) ;;
-  *)
-    echo "Add pi-pro to PATH:"
-    echo "  export PATH=\"$bin_dir:\$PATH\""
-    ;;
-esac
+echo "pi-pro is available in new shell sessions."
 echo "After installation, run: pi-pro init"

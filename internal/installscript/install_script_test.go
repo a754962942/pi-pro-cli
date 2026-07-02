@@ -44,6 +44,27 @@ func TestInstallScriptInstallsBinaryOnlyAndPrintsInitNextStep(t *testing.T) {
 	}
 }
 
+func TestInstallScriptAddsManagedBinToProfile(t *testing.T) {
+	binary := []byte("binary")
+	home := t.TempDir()
+	fixture := installFixture(t, binary, sha256Hex(binary))
+	profile := filepath.Join(home, ".profile")
+
+	result := runInstallScript(t, home, fixture, map[string]string{"PI_PRO_INSTALL_PROFILE": profile})
+
+	if result.err != nil {
+		t.Fatalf("expected install success, got %v\nstdout=%s\nstderr=%s", result.err, result.stdout, result.stderr)
+	}
+	data, err := os.ReadFile(profile)
+	if err != nil {
+		t.Fatalf("expected profile update, got %v", err)
+	}
+	expected := `export PATH="` + filepath.Join(home, "bin") + `:$PATH"`
+	if !strings.Contains(string(data), expected) {
+		t.Fatalf("expected profile to contain %q, got %s", expected, string(data))
+	}
+}
+
 func TestInstallScriptSendsNoLocalVersionRequest(t *testing.T) {
 	binary := []byte("binary")
 	fixture := installFixture(t, binary, sha256Hex(binary))
@@ -139,6 +160,7 @@ func runInstallScript(t *testing.T, home string, fixture string, extra map[strin
 	cmd.Env = append(os.Environ(),
 		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PI_PRO_HOME="+home,
+		"PI_PRO_INSTALL_PROFILE="+filepath.Join(home, ".profile"),
 		"PI_PRO_OS=darwin",
 		"PI_PRO_ARCH=arm64",
 	)
