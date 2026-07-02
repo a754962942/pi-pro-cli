@@ -40,13 +40,15 @@ func TestHelpListsPlannedMVPCommands(t *testing.T) {
 		"pi-pro task wait <jobId>",
 		"pi-pro task cancel <jobId>",
 		"pi-pro generateImage --provider <provider> --model <model> --type <type>",
-		"pi-pro generateVoice --provider <provider> --model <model> --type <type>",
 		"pi-pro generateVideo --provider <provider> --model <model> --type <type>",
 		"pi-pro --version",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("expected help output to contain %q, got:\n%s", want, stdout.String())
 		}
+	}
+	if strings.Contains(stdout.String(), "generateVoice") {
+		t.Fatalf("did not expect unsupported generateVoice in help output:\n%s", stdout.String())
 	}
 }
 

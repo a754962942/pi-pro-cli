@@ -1,0 +1,24 @@
+{
+  "provider": "seeddance",
+  "model": "v1",
+  "type": "two-image-to-video",
+  "schemaVersion": "1.0",
+  "artifactKind": "video",
+  "displayName": "SeedDance 首尾帧生视频",
+  "description": "Generate a video from start-frame and end-frame reference images with a prompt.",
+  "input": {
+    "unknownPolicy": "reject",
+    "required": ["prompt", "image"],
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "image": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2
+      }
+    }
+  }
+}

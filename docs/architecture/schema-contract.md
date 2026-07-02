@@ -9,6 +9,7 @@ PI-Pro CLI uses `provider`, `model`, and `type` to select a provider-specific sc
 The CLI must not couple command execution to local schema files. Local schemas are downloaded by `pi-pro init` for the first implementation. Later, schemas may be resolved directly from the server.
 
 Schema lookup and source resolution are defined in [Schema Registry and Resolution Flow](schema-registry-and-resolution-flow.md).
+Agent-facing model parameter, resource, constraint, and dry-run contract details are defined in [Schema Parameter Contract](schema-parameter-contract.md).
 Install and initialization behavior is defined in [Install and Init Flow](install-and-init-flow.md).
 
 ## Design Goals

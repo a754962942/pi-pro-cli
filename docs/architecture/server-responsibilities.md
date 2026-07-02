@@ -25,6 +25,7 @@ The server must therefore own long-running task lifecycle management, while the 
 Auth and config resolution is defined in [Auth and Config Flow](auth-and-config-flow.md).
 Task submission, polling, and cancellation are defined in [Task Polling and Server Client Flow](task-polling-and-server-client-flow.md).
 Server endpoints required by the CLI are summarized in [Server Endpoint Contract](server-endpoint-contract.md).
+Server-side capability lessons from `@lingjingai/lj-awb-cli` are recorded in [Server Capability Analysis From LingjingAI](server-capability-analysis-from-lingjingai.md).
 
 ### Server Responsibilities
 

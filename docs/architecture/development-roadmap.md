@@ -20,12 +20,16 @@ output-and-error-contract.md
 install-and-init-flow.md
 auth-and-config-flow.md
 schema-contract.md
+schema-parameter-contract.md
 schema-registry-and-resolution-flow.md
 validation-normalization-pipeline.md
 asset-io-sqlite-flow.md
 task-polling-and-server-client-flow.md
 server-endpoint-contract.md
 server-responsibilities.md
+server-capability-analysis-from-lingjingai.md
+capability-api-iteration-plan.md
+current-development-status.md
 ```
 
 ## Guiding Principles
@@ -1193,12 +1197,69 @@ go test -timeout 60s ./...
 shellcheck scripts/install.sh not run: shellcheck is not installed in the current environment
 ```
 
-### Chapter 12: MVP Integration Gate
+### Chapter 12: Agent Schema and Dry Run
 
 Status:
 
 ```text
-pending; wait for downstream server endpoints and concrete provider/model schemas before continuing
+partially completed; schema commands are implemented, dry-run remains pending
+```
+
+Purpose:
+
+```text
+Expose an agent-facing command contract and a safe generation preflight path.
+```
+
+Implementation scope:
+
+```text
+pi-pro schema --brief
+pi-pro schema inspect --provider <provider> --model <model> --type <type>
+generateImage --dry-run
+generateVoice --dry-run
+generateVideo --dry-run
+dry-run normalized request preview
+dry-run execution plan output
+no generation submission during dry-run
+no task polling during dry-run
+no artifact download during dry-run
+```
+
+Current boundary:
+
+```text
+schema --brief and schema inspect are implemented against remote capability/schema data with local schema fallback.
+The schema command should describe command contracts and safety policy, not execute provider mapper code.
+The existing types command remains the local provider/model/type listing and raw schema inspection surface.
+Dry-run remains pending and must not submit generation, poll tasks, upload files, or download artifacts.
+```
+
+Recommended tests:
+
+```text
+internal/commands/schema_command_test.go
+internal/generation/dry_run_test.go
+go test ./...
+```
+
+Exit criteria:
+
+```text
+schema --brief returns compact agent-readable command contract JSON: completed
+schema inspect returns one precise provider/model/type execution contract: completed
+dry-run validates and normalizes input without POST /generations
+dry-run resolves known asset-db file references without uploading unknown files
+dry-run returns wouldSubmit/wouldWait/wouldDownload execution plan
+go test ./... passes
+```
+
+### Chapter 13: MVP Integration Gate
+
+Status:
+
+```text
+partially completed; main CLI/server/provider path is verified for Grok and Vidu
 ```
 
 Purpose:
@@ -1249,10 +1310,28 @@ architecture documents match implemented behavior
 Current stop point:
 
 ```text
-Development is intentionally paused after Chapter 11.
-Chapter 0 through Chapter 11 are completed for the current CLI-only scope.
-Chapter 10 contains a generic generation pipeline only; real provider schema behavior and downstream server联调 remain pending.
-Chapter 12 should resume only after server endpoints, auth behavior, release metadata, init files, concrete schemas, generation submission, task polling, and artifact responses are available or mockable at the agreed contract level.
+Development has resumed beyond Chapter 11.
+Chapter 12 schema command work is implemented; dry-run remains pending.
+Chapter 13 has verified init, auth, capability discovery, schema inspection, generation submission, task polling, and real Grok/Vidu provider output through pi-pro-server and MinIO.
+Remaining Chapter 13 work is focused on full CLI-driven Seedance verification, deferred feature guards, release packaging checks, and README examples.
+```
+
+Progress update:
+
+```text
+2026-06-29
+- Added capability API client usage to types list and types inspect --type.
+- Added schema --brief and schema inspect with remote schema/capability first and local fallback.
+- Verified CLI -> Server -> Grok -> MinIO real E2E.
+- Verified CLI -> Server -> Vidu -> MinIO real E2E.
+- Confirmed server-side Seedance-2.0 and Seedance-2.0-fast direct provider E2E writes artifacts to MinIO.
+- Recorded Seedance prompt image reference rule: @图1, @图2, ... map to images array order.
+
+2026-06-29 image capability sync
+- Server now advertises qiling/text-to-image for gpt-image-2, gpt-image-2-vip, nano-banana-2, and nano-banana-2-2k-cl.
+- Server now advertises qiling/image-to-image for gpt-image-2-vip, nano-banana-2, and nano-banana-2-2k-cl.
+- gpt-image-2 image-to-image is intentionally not advertised because the real provider channel returned upstream_error excessive system load during verification.
+- No CLI image-flow code was developed in this sync; follow-up work is CLI -> Server -> Qiling -> MinIO E2E for generateImage.
 ```
 
 ## Legacy Phase Mapping

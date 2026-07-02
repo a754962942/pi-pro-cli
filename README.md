@@ -26,28 +26,34 @@ It follows the same local-first direction as PAI-Pro:
 
 ## Status
 
-This repository is currently an initial CLI workspace. Implementation details, installation commands, and command references will be documented here as the CLI surface lands.
+PI-Pro CLI now has the main command surface implemented and can connect to `pi-pro-server` for initialization, auth, capability discovery, remote schema inspection, generation submission, task polling, and cancellation.
 
-## Architecture Notes
+Current verified paths:
 
-- [Development roadmap](docs/architecture/development-roadmap.md)
-- [Project structure and package boundaries](docs/architecture/project-structure-and-package-boundaries.md)
-- [Version comparison flow](docs/architecture/version-comparison-flow.md)
-- [TDD test cases](docs/architecture/tdd-test-cases.md)
-- [CLI command design](docs/architecture/cli-command-design.md)
-- [Schema contract](docs/architecture/schema-contract.md)
-- [Schema registry and resolution](docs/architecture/schema-registry-and-resolution-flow.md)
-- [Install and init flow](docs/architecture/install-and-init-flow.md)
-- [Auth and config flow](docs/architecture/auth-and-config-flow.md)
-- [Validation and normalization pipeline](docs/architecture/validation-normalization-pipeline.md)
-- [Output and error contract](docs/architecture/output-and-error-contract.md)
-- [Asset IO and SQLite flow](docs/architecture/asset-io-sqlite-flow.md)
-- [Task polling and server client flow](docs/architecture/task-polling-and-server-client-flow.md)
+- `CLI -> Server -> Grok -> MinIO`
+- `CLI -> Server -> Vidu -> MinIO`
+- `CLI -> Server -> Qiling text-to-image/image-to-image -> MinIO`
+- `Server -> Seedance-2.0 / Seedance-2.0-fast -> MinIO` through server-side direct provider gates
+
+Implemented generation safeguards include `generate* --dry-run`, capability preflight before `/generations`, and local artifact download to `--output` / `--output-dir` after a succeeded waited task. Still planned: full CLI-driven Seedance verification and release packaging validation.
+
+## Release Notes
+
+- [Release preflight](docs/release-preflight.md)
+- [Current development status](docs/architecture/current-development-status.md)
 - [Server responsibilities](docs/architecture/server-responsibilities.md)
-- [Server endpoint contract](docs/architecture/server-endpoint-contract.md)
-- [Architecture review](docs/architecture/architecture-review.md)
+- [Schema contract](docs/architecture/schema-contract.md)
+- [Schema parameter contract](docs/architecture/schema-parameter-contract.md)
+
+Historical design notes remain under `docs/architecture/`. They are useful for implementation context, but they may contain old placeholder hosts, version examples, or planned behavior from earlier design phases.
 
 ## Quick start
+
+Install the latest CLI from the configured release server:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/a754962942/pi-pro-cli/main/scripts/install.sh | sh
+```
 
 Clone the repository:
 
@@ -55,6 +61,62 @@ Clone the repository:
 git clone git@github.com:a754962942/pi-pro-cli.git
 cd pi-pro-cli
 ```
+
+Run the local tests:
+
+```sh
+go test ./... -count=1
+```
+
+Initialize CLI runtime files from the configured server:
+
+```sh
+pi-pro init
+```
+
+Log in:
+
+```sh
+pi-pro auth login
+```
+
+For CI or agents, pre-seed an isolated config directory instead of using interactive login:
+
+```sh
+export PI_PRO_CONFIG_DIR="$PWD/.pi-pro-ci"
+mkdir -p "$PI_PRO_CONFIG_DIR"
+printf '{"authToken":"%s","username":"%s"}\n' "$PI_PRO_AUTH_TOKEN" "$PI_PRO_USERNAME" > "$PI_PRO_CONFIG_DIR/config.json"
+chmod 600 "$PI_PRO_CONFIG_DIR/config.json"
+```
+
+Inspect available generation capabilities and schemas:
+
+```sh
+pi-pro types list
+pi-pro types inspect --type image-to-video
+pi-pro schema --brief
+pi-pro schema inspect --provider grok --model grok-video-1.5 --type image-to-video
+```
+
+Submit a video generation request:
+
+```sh
+pi-pro generateVideo \
+  --provider grok \
+  --model grok-video-1.5 \
+  --type image-to-video \
+  --input request.json
+```
+
+Poll or cancel a task:
+
+```sh
+pi-pro task status <jobId>
+pi-pro task wait <jobId>
+pi-pro task cancel <jobId>
+```
+
+`types` and `schema` prefer remote server data and fall back to local downloaded schemas when possible. Provider-specific request mapping is intentionally server-side.
 
 Use your coding agent to inspect the project and continue setup from the current repository state:
 

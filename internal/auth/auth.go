@@ -164,7 +164,7 @@ func withDefaults(options Options) Options {
 		}
 	}
 	if options.ServerURL == "" {
-		options.ServerURL = config.BuiltInServerURL
+		options.ServerURL = config.Runtime().ServerURL
 	}
 	if options.HTTPClient == nil {
 		options.HTTPClient = http.DefaultClient

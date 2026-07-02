@@ -8,8 +8,12 @@ import (
 	"runtime"
 )
 
-const BuiltInServerURL = "https://api.example.com"
 const EnvConfigDir = "PI_PRO_CONFIG_DIR"
+const EnvServerURL = "PI_PRO_SERVER_URL"
+
+// BuiltInServerURL is injected by release builds with:
+// go build -ldflags "-X github.com/a754962942/pi-pro-cli/internal/config.BuiltInServerURL=<server-url>"
+var BuiltInServerURL = "https://api.example.com"
 
 // LocalVersion is injected by release builds with:
 // go build -ldflags "-X github.com/a754962942/pi-pro-cli/internal/config.LocalVersion=<version>"
@@ -36,8 +40,12 @@ type RuntimeConfig struct {
 }
 
 func Runtime() RuntimeConfig {
+	serverURL := os.Getenv(EnvServerURL)
+	if serverURL == "" {
+		serverURL = BuiltInServerURL
+	}
 	return RuntimeConfig{
-		ServerURL: BuiltInServerURL,
+		ServerURL: serverURL,
 	}
 }
 

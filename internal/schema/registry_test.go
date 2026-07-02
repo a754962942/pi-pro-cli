@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -92,6 +94,48 @@ func TestLocalRegistryReturnsNotFoundForUnknownSchema(t *testing.T) {
 	if appErr.Code != errdefs.CodeSchemaNotFound {
 		t.Fatalf("expected %s, got %q", errdefs.CodeSchemaNotFound, appErr.Code)
 	}
+}
+
+func TestRemoteRegistryGetsSchemaFromAPI(t *testing.T) {
+	registry := NewRemoteRegistry(context.Background(), fakeRemoteClient{
+		body: json.RawMessage(`{"provider":"vidu","model":"vidu/viduq3-turbo_img2video","type":"image-to-video","schemaVersion":"1.0","artifactKind":"video","input":{}}`),
+	}, nil)
+
+	got, err := registry.Get("vidu", "vidu/viduq3-turbo_img2video", "image-to-video")
+
+	if err != nil {
+		t.Fatalf("expected remote schema, got %v", err)
+	}
+	if got.Model != "vidu/viduq3-turbo_img2video" {
+		t.Fatalf("unexpected schema: %#v", got)
+	}
+}
+
+func TestRemoteRegistryFallsBackToLocalSchema(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "schemas")
+	writeSchema(t, root, "seeddance", "v1", "image-to-video", schemaJSON("seeddance", "v1", "image-to-video", "video"))
+	registry := NewRemoteRegistry(context.Background(), fakeRemoteClient{err: errors.New("offline")}, NewLocalRegistry(root))
+
+	got, err := registry.Get("seeddance", "v1", "image-to-video")
+
+	if err != nil {
+		t.Fatalf("expected fallback schema, got %v", err)
+	}
+	if got.Provider != "seeddance" || got.Model != "v1" {
+		t.Fatalf("unexpected fallback schema: %#v", got)
+	}
+}
+
+type fakeRemoteClient struct {
+	body json.RawMessage
+	err  error
+}
+
+func (c fakeRemoteClient) Schema(ctx context.Context, provider string, model string, schemaType string) (json.RawMessage, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.body, nil
 }
 
 func writeSchema(t *testing.T, root string, provider string, model string, schemaType string, body string) {

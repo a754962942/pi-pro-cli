@@ -14,9 +14,11 @@ import (
 
 	"github.com/a754962942/pi-pro-cli/internal/apperror"
 	"github.com/a754962942/pi-pro-cli/internal/assets"
+	"github.com/a754962942/pi-pro-cli/internal/client"
 	"github.com/a754962942/pi-pro-cli/internal/errdefs"
 	"github.com/a754962942/pi-pro-cli/internal/schema"
 	"github.com/a754962942/pi-pro-cli/internal/serverapi"
+	"github.com/a754962942/pi-pro-cli/internal/validation"
 )
 
 func TestRunNoWaitSubmitsNormalizedRequestAndDoesNotPoll(t *testing.T) {
@@ -116,6 +118,318 @@ func TestRunWaitPollsTaskUntilSuccess(t *testing.T) {
 	}
 	if stderr.String() == "" {
 		t.Fatalf("expected polling diagnostics on stderr")
+	}
+}
+
+func TestRunWaitDownloadsSingleArtifactToOutput(t *testing.T) {
+	store := openGenerationAssetStore(t)
+	outputPath := filepath.Join(t.TempDir(), "result.mp4")
+	calls := 0
+	httpClient := generationHTTPClient(func(r *http.Request) (*http.Response, error) {
+		calls++
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == serverapi.Generations:
+			return generationJSONResponse(http.StatusOK, `{"jobId":"job_123","status":"queued"}`), nil
+		case r.Method == http.MethodGet && r.URL.Path == serverapi.TaskStatus("job_123"):
+			return generationJSONResponse(http.StatusOK, `{"jobId":"job_123","status":"succeeded","artifacts":[{"url":"https://server.example/video.mp4","mime":"video/mp4","kind":"video"}]}`), nil
+		case r.Method == http.MethodGet && r.URL.String() == "https://server.example/video.mp4":
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"video/mp4"}}, Body: io.NopCloser(bytes.NewBufferString("video-bytes"))}, nil
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+			return nil, nil
+		}
+	})
+
+	result, err := NewService(Options{
+		Registry:   fakeRegistry{selected: generationTestSchema("video")},
+		ServerURL:  "https://api.example.test",
+		AuthToken:  "sk-pipro-test",
+		HTTPClient: httpClient,
+		AssetStore: store,
+		TaskSleep:  func(delay time.Duration) {},
+		TaskJitter: func(delay time.Duration) time.Duration { return delay },
+	}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+		Wait:         true,
+		OutputPath:   outputPath,
+		Timeout:      time.Minute,
+		PollInterval: time.Second,
+		PollMax:      time.Second,
+		PollBackoff:  1,
+	})
+
+	if err != nil {
+		t.Fatalf("expected downloaded artifact, got %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected submit, poll, and download calls, got %d", calls)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil || string(data) != "video-bytes" {
+		t.Fatalf("expected downloaded file, data=%q err=%v", string(data), err)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Path != outputPath {
+		t.Fatalf("expected result artifact path, got %#v", result.Artifacts)
+	}
+	asset, ok, err := store.FindByPath(outputPath)
+	if err != nil || !ok || asset.JobID != "job_123" || asset.Provider != "mock-provider" || asset.ArtifactKind != "video" {
+		t.Fatalf("expected downloaded asset record, ok=%v asset=%#v err=%v", ok, asset, err)
+	}
+}
+
+func TestRunWaitDownloadsMultipleArtifactsToOutputDir(t *testing.T) {
+	store := openGenerationAssetStore(t)
+	outputDir := t.TempDir()
+	httpClient := generationHTTPClient(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == serverapi.Generations:
+			return generationJSONResponse(http.StatusOK, `{"jobId":"job_123","status":"queued"}`), nil
+		case r.Method == http.MethodGet && r.URL.Path == serverapi.TaskStatus("job_123"):
+			return generationJSONResponse(http.StatusOK, `{"jobId":"job_123","status":"succeeded","artifacts":[{"url":"https://server.example/first.png","mime":"image/png","kind":"image"},{"url":"https://server.example/second.png","mime":"image/png","kind":"image"}]}`), nil
+		case r.Method == http.MethodGet && r.URL.String() == "https://server.example/first.png":
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/png"}}, Body: io.NopCloser(bytes.NewBufferString("first"))}, nil
+		case r.Method == http.MethodGet && r.URL.String() == "https://server.example/second.png":
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/png"}}, Body: io.NopCloser(bytes.NewBufferString("second"))}, nil
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+			return nil, nil
+		}
+	})
+
+	result, err := NewService(Options{
+		Registry:   fakeRegistry{selected: generationTestSchema("image")},
+		ServerURL:  "https://api.example.test",
+		AuthToken:  "sk-pipro-test",
+		HTTPClient: httpClient,
+		AssetStore: store,
+		TaskSleep:  func(delay time.Duration) {},
+		TaskJitter: func(delay time.Duration) time.Duration { return delay },
+	}).Run(context.Background(), Request{
+		Command:      "generateImage",
+		ArtifactKind: "image",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+		Wait:         true,
+		OutputDir:    outputDir,
+		Timeout:      time.Minute,
+		PollInterval: time.Second,
+		PollMax:      time.Second,
+		PollBackoff:  1,
+	})
+
+	if err != nil {
+		t.Fatalf("expected downloaded artifacts, got %v", err)
+	}
+	if len(result.Artifacts) != 2 {
+		t.Fatalf("expected two artifacts, got %#v", result.Artifacts)
+	}
+	for i, artifact := range result.Artifacts {
+		if artifact.Path == "" || filepath.Dir(artifact.Path) != outputDir {
+			t.Fatalf("expected artifact %d in output dir, got %#v", i, artifact)
+		}
+		if _, err := os.Stat(artifact.Path); err != nil {
+			t.Fatalf("expected downloaded artifact file, got %v", err)
+		}
+	}
+}
+
+func TestRunRejectsOutputPathWithoutWait(t *testing.T) {
+	_, err := NewService(Options{Registry: fakeRegistry{selected: generationTestSchema("video")}}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+		Wait:         false,
+		OutputPath:   filepath.Join(t.TempDir(), "result.mp4"),
+	})
+
+	var appErr apperror.AppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected AppError, got %T %[1]v", err)
+	}
+	if appErr.Code != errdefs.CodeUsage {
+		t.Fatalf("expected %s, got %q", errdefs.CodeUsage, appErr.Code)
+	}
+}
+
+func TestRunRejectsExistingOutputPathBeforeSubmit(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "result.mp4")
+	if err := os.WriteFile(outputPath, []byte("exists"), 0o600); err != nil {
+		t.Fatalf("expected fixture file, got %v", err)
+	}
+	called := false
+
+	_, err := NewService(Options{
+		Registry: fakeRegistry{selected: generationTestSchema("video")},
+		HTTPClient: generationHTTPClient(func(r *http.Request) (*http.Response, error) {
+			called = true
+			return nil, nil
+		}),
+	}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+		Wait:         true,
+		OutputPath:   outputPath,
+	})
+
+	var appErr apperror.AppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected AppError, got %T %[1]v", err)
+	}
+	if appErr.Code != errdefs.CodeOutputPathExists {
+		t.Fatalf("expected %s, got %q", errdefs.CodeOutputPathExists, appErr.Code)
+	}
+	if called {
+		t.Fatalf("expected existing output path to fail before submit")
+	}
+}
+
+func TestRunDryRunReturnsNormalizedRequestWithoutAuthOrServerCall(t *testing.T) {
+	called := false
+
+	result, err := NewService(Options{
+		Registry: fakeRegistry{selected: generationTestSchema("video")},
+		HTTPClient: generationHTTPClient(func(r *http.Request) (*http.Response, error) {
+			called = true
+			return nil, nil
+		}),
+	}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+		DryRun:       true,
+	})
+
+	if err != nil {
+		t.Fatalf("expected dry-run result, got %v", err)
+	}
+	if called {
+		t.Fatalf("expected dry-run to avoid server calls")
+	}
+	if !result.OK || result.Status != "dry-run" || !result.DryRun || result.Plan == nil || result.Plan.Submit || result.Plan.Wait || result.Plan.ResolveAssets {
+		t.Fatalf("unexpected dry-run result %#v", result)
+	}
+	request, ok := result.Request.(validation.Request)
+	if !ok {
+		t.Fatalf("expected normalized validation request, got %T %#v", result.Request, result.Request)
+	}
+	if request.Provider != "mock-provider" ||
+		request.Model != "mock-model" ||
+		request.Type != "text-to-video" ||
+		request.ArtifactKind != "video" ||
+		request.Input["prompt"] != "lake" ||
+		request.Input["duration"] != float64(5) {
+		t.Fatalf("unexpected normalized request %#v", request)
+	}
+}
+
+func TestRunDryRunDoesNotResolveFileFields(t *testing.T) {
+	store := openGenerationAssetStore(t)
+	filePath := writeGenerationFile(t, "image.png", []byte("image"))
+
+	result, err := NewService(Options{
+		Registry:      fakeRegistry{selected: generationImageToVideoSchema()},
+		AssetResolver: assets.NewResolver(store, nil),
+	}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "image-to-video",
+		CLIValues:    map[string]any{"prompt": "lake", "image": filePath},
+		DryRun:       true,
+	})
+
+	if err != nil {
+		t.Fatalf("expected dry-run file preview, got %v", err)
+	}
+	request := result.Request.(validation.Request)
+	if request.Input["image"] != filePath {
+		t.Fatalf("expected dry-run to preserve local file path, got %#v", request.Input["image"])
+	}
+}
+
+func TestRunRejectsUnsupportedCapabilityBeforeServerCall(t *testing.T) {
+	called := false
+
+	_, err := NewService(Options{
+		Registry:     fakeRegistry{selected: generationTestSchema("video")},
+		Capabilities: fakeCapabilityClient{models: client.CapabilityModelsResponse{Models: []client.CapabilityModel{}}},
+		AuthToken:    "sk-pipro-test",
+		HTTPClient: generationHTTPClient(func(r *http.Request) (*http.Response, error) {
+			called = true
+			return nil, nil
+		}),
+	}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+	})
+
+	var appErr apperror.AppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected AppError, got %T %[1]v", err)
+	}
+	if appErr.Code != errdefs.CodeCapabilityUnsupported {
+		t.Fatalf("expected %s, got %q", errdefs.CodeCapabilityUnsupported, appErr.Code)
+	}
+	if called {
+		t.Fatalf("expected capability failure before server call")
+	}
+}
+
+func TestRunAcceptsAdvertisedCapability(t *testing.T) {
+	var received map[string]any
+	httpClient := generationHTTPClient(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != serverapi.Generations {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("expected generation JSON request, got %v", err)
+		}
+		return generationJSONResponse(http.StatusOK, `{"jobId":"job_123","status":"queued"}`), nil
+	})
+
+	_, err := NewService(Options{
+		Registry:     fakeRegistry{selected: generationTestSchema("video")},
+		Capabilities: fakeCapabilityClient{models: advertisedCapability("mock-provider", "mock-model", "text-to-video")},
+		ServerURL:    "https://api.example.test",
+		AuthToken:    "sk-pipro-test",
+		HTTPClient:   httpClient,
+	}).Run(context.Background(), Request{
+		Command:      "generateVideo",
+		ArtifactKind: "video",
+		Provider:     "mock-provider",
+		Model:        "mock-model",
+		Type:         "text-to-video",
+		CLIValues:    map[string]any{"prompt": "lake"},
+		Wait:         false,
+	})
+
+	if err != nil {
+		t.Fatalf("expected advertised capability generation, got %v", err)
+	}
+	if received["provider"] != "mock-provider" {
+		t.Fatalf("expected generation request after capability validation, got %#v", received)
 	}
 }
 
@@ -252,6 +566,30 @@ func TestRunResolvesFileFieldsThroughAssetDB(t *testing.T) {
 type fakeRegistry struct {
 	selected schema.Schema
 	err      error
+}
+
+type fakeCapabilityClient struct {
+	models client.CapabilityModelsResponse
+	err    error
+}
+
+func (c fakeCapabilityClient) CapabilityModels(ctx context.Context, eventType string) (client.CapabilityModelsResponse, error) {
+	if c.err != nil {
+		return client.CapabilityModelsResponse{}, c.err
+	}
+	return c.models, nil
+}
+
+func advertisedCapability(provider string, model string, eventType string) client.CapabilityModelsResponse {
+	return client.CapabilityModelsResponse{
+		Models: []client.CapabilityModel{{
+			Code:                model,
+			SupportedEventTypes: []string{eventType},
+			Providers: []client.CapabilityProviderMapping{{
+				ProviderCode: provider,
+			}},
+		}},
+	}
 }
 
 func (r fakeRegistry) Get(provider string, model string, schemaType string) (schema.Schema, error) {

@@ -1,3 +1,2 @@
+// Package generation coordinates generateImage and generateVideo flows.
 package generation
-
-// Package generation coordinates generateImage, generateVoice, and generateVideo flows.

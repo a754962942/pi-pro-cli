@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/a754962942/pi-pro-cli/internal/apperror"
 	"github.com/a754962942/pi-pro-cli/internal/errdefs"
+	"github.com/a754962942/pi-pro-cli/internal/serverapi"
 )
 
 type HTTPClient interface {
@@ -27,11 +29,81 @@ type Client struct {
 	config Config
 }
 
+type CapabilityTypesResponse struct {
+	Types []CapabilityType `json:"types"`
+}
+
+type CapabilityType struct {
+	Code         string `json:"code"`
+	Name         string `json:"name"`
+	ArtifactKind string `json:"artifactKind"`
+}
+
+type CapabilityModelsResponse struct {
+	Models []CapabilityModel `json:"models"`
+}
+
+type CapabilityModel struct {
+	Code                string                      `json:"code"`
+	Name                string                      `json:"name"`
+	Modality            string                      `json:"modality"`
+	SupportedEventTypes []string                    `json:"supportedEventTypes"`
+	Providers           []CapabilityProviderMapping `json:"providers"`
+}
+
+type CapabilityProviderMapping struct {
+	Code            string `json:"code"`
+	ProviderCode    string `json:"providerCode"`
+	ProviderName    string `json:"providerName"`
+	ModelCode       string `json:"modelCode"`
+	ProviderModelID string `json:"providerModelId"`
+	RequestAdapter  string `json:"requestAdapter"`
+	ResponseAdapter string `json:"responseAdapter"`
+	Priority        int    `json:"priority"`
+	Weight          int    `json:"weight"`
+	TimeoutSeconds  int    `json:"timeoutSeconds"`
+	SupportsCancel  bool   `json:"supportsCancel"`
+	HealthStatus    string `json:"healthStatus"`
+}
+
+type SchemaResponse struct {
+	OK     bool            `json:"ok"`
+	Schema json.RawMessage `json:"schema"`
+}
+
 func New(config Config) *Client {
 	if config.HTTPClient == nil {
 		config.HTTPClient = http.DefaultClient
 	}
 	return &Client{config: config}
+}
+
+func (c *Client) CapabilityTypes(ctx context.Context) (CapabilityTypesResponse, error) {
+	var response CapabilityTypesResponse
+	if err := c.DoJSON(ctx, http.MethodGet, serverapi.CapabilityTypes, nil, &response); err != nil {
+		return CapabilityTypesResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CapabilityModels(ctx context.Context, eventType string) (CapabilityModelsResponse, error) {
+	var response CapabilityModelsResponse
+	if err := c.DoJSON(ctx, http.MethodGet, serverapi.CapabilityModels(eventType), nil, &response); err != nil {
+		return CapabilityModelsResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) Schema(ctx context.Context, provider string, model string, schemaType string) (json.RawMessage, error) {
+	query := url.Values{}
+	query.Set("provider", provider)
+	query.Set("model", model)
+	query.Set("type", schemaType)
+	var response SchemaResponse
+	if err := c.DoJSON(ctx, http.MethodGet, serverapi.CLISchema+"?"+query.Encode(), nil, &response); err != nil {
+		return nil, err
+	}
+	return response.Schema, nil
 }
 
 func (c *Client) DoJSON(ctx context.Context, method string, path string, request any, response any) error {

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-SERVER_URL="${PI_PRO_SERVER_URL:-https://api.example.com}"
+SERVER_URL="${PI_PRO_SERVER_URL:-https://api.pi-pro.org}"
 PI_PRO_HOME="${PI_PRO_HOME:-$HOME/.pi-pro}"
 CHANNEL="${PI_PRO_CHANNEL:-internal}"
 DRY_RUN="${PI_PRO_DRY_RUN:-0}"

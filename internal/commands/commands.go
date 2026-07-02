@@ -14,6 +14,7 @@ import (
 	"github.com/a754962942/pi-pro-cli/internal/apperror"
 	"github.com/a754962942/pi-pro-cli/internal/assets"
 	"github.com/a754962942/pi-pro-cli/internal/auth"
+	"github.com/a754962942/pi-pro-cli/internal/client"
 	"github.com/a754962942/pi-pro-cli/internal/config"
 	"github.com/a754962942/pi-pro-cli/internal/errdefs"
 	"github.com/a754962942/pi-pro-cli/internal/generation"
@@ -79,6 +80,7 @@ func newRootCommand(stdout io.Writer, stderr io.Writer, options Options) *cobra.
 	root.SetErr(stderr)
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.Flags().BoolVarP(&showVersion, "version", "v", false, "Print version information")
+	root.PersistentFlags().StringVar(&options.ServerURL, "server-url", options.ServerURL, "PI-Pro server URL")
 
 	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		_, _ = fmt.Fprintln(stdout, helpText())
@@ -89,9 +91,9 @@ func newRootCommand(stdout io.Writer, stderr io.Writer, options Options) *cobra.
 	root.AddCommand(newUpdateCommand(stdout, options))
 	root.AddCommand(newAuthCommand(stdout, stderr, options))
 	root.AddCommand(newTypesCommand(stdout, options))
+	root.AddCommand(newSchemaCommand(stdout, options))
 	root.AddCommand(newTaskCommand(stdout, stderr, options))
 	root.AddCommand(newGenerateCommand("generateImage", "image", stdout, stderr, options))
-	root.AddCommand(newGenerateCommand("generateVoice", "voice", stdout, stderr, options))
 	root.AddCommand(newGenerateCommand("generateVideo", "video", stdout, stderr, options))
 
 	return root
@@ -129,7 +131,15 @@ func schemaRegistry(options Options) schema.Registry {
 		}
 	}
 	paths := config.PathsFor(configDir)
-	return schema.NewLocalRegistry(paths.SchemasDir)
+	local := schema.NewLocalRegistry(paths.SchemasDir)
+	serverURL := options.ServerURL
+	if serverURL == "" {
+		serverURL = config.Runtime().ServerURL
+	}
+	return schema.NewRemoteRegistry(context.Background(), client.New(client.Config{
+		ServerURL:  serverURL,
+		HTTPClient: options.HTTPClient,
+	}), local)
 }
 
 func newInitCommand(stdout io.Writer, options Options) *cobra.Command {
@@ -252,6 +262,12 @@ func newTypesCommand(stdout io.Writer, options Options) *cobra.Command {
 		Use:   "list",
 		Short: "List available generation types",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if result, ok := capabilityTypes(cmd.Context(), options); ok {
+				if exitCode := output.WriteJSON(stdout, result); exitCode != 0 {
+					return apperror.AppError{Code: errdefs.CodeOutputWriteFailed, Message: errdefs.MessageOutputWriteVersionFailed, Kind: apperror.KindIO}
+				}
+				return nil
+			}
 			types, err := schemaRegistry(options).List()
 			if err != nil {
 				return err
@@ -270,6 +286,16 @@ func newTypesCommand(stdout io.Writer, options Options) *cobra.Command {
 		Use:   "inspect",
 		Short: "Inspect a generation type schema",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if provider == "" && model == "" && schemaType != "" {
+				result, err := capabilityModels(cmd.Context(), options, schemaType)
+				if err != nil {
+					return err
+				}
+				if exitCode := output.WriteJSON(stdout, result); exitCode != 0 {
+					return apperror.AppError{Code: errdefs.CodeOutputWriteFailed, Message: errdefs.MessageOutputWriteVersionFailed, Kind: apperror.KindIO}
+				}
+				return nil
+			}
 			if provider == "" || model == "" || schemaType == "" {
 				return apperror.Usage(errdefs.CodeUsage, "provider, model, and type are required")
 			}
@@ -288,6 +314,135 @@ func newTypesCommand(stdout io.Writer, options Options) *cobra.Command {
 	inspect.Flags().StringVar(&schemaType, "type", "", "Generation behavior type")
 	cmd.AddCommand(inspect)
 	return cmd
+}
+
+func newSchemaCommand(stdout io.Writer, options Options) *cobra.Command {
+	var brief bool
+	cmd := &cobra.Command{
+		Use:   "schema",
+		Short: "Inspect PI-Pro schema contracts",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !brief {
+				return apperror.Usage(errdefs.CodeUsage, "missing schema subcommand")
+			}
+			result, err := schemaBrief(cmd.Context(), options)
+			if err != nil {
+				return err
+			}
+			return writeCommandJSON(stdout, result)
+		},
+	}
+	cmd.Flags().BoolVar(&brief, "brief", false, "Show compact remote capability and schema index")
+
+	var provider string
+	var model string
+	var schemaType string
+	inspect := &cobra.Command{
+		Use:   "inspect",
+		Short: "Inspect one provider/model/type schema",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if provider == "" || model == "" || schemaType == "" {
+				return apperror.Usage(errdefs.CodeUsage, "provider, model, and type are required")
+			}
+			selected, err := schemaRegistry(options).Get(provider, model, schemaType)
+			if err != nil {
+				return err
+			}
+			return writeCommandJSON(stdout, map[string]any{"ok": true, "schema": selected})
+		},
+	}
+	inspect.Flags().StringVar(&provider, "provider", "", "Model provider")
+	inspect.Flags().StringVar(&model, "model", "", "Model name")
+	inspect.Flags().StringVar(&schemaType, "type", "", "Generation behavior type")
+	cmd.AddCommand(inspect)
+	return cmd
+}
+
+type capabilityTypeOutput struct {
+	Type         string `json:"type"`
+	DisplayName  string `json:"displayName,omitempty"`
+	ArtifactKind string `json:"artifactKind"`
+}
+
+type schemaBriefTypeOutput struct {
+	Type         string                   `json:"type"`
+	DisplayName  string                   `json:"displayName,omitempty"`
+	ArtifactKind string                   `json:"artifactKind"`
+	Models       []client.CapabilityModel `json:"models"`
+}
+
+func schemaBrief(ctx context.Context, options Options) (map[string]any, error) {
+	service, ok := capabilityClient(options)
+	if ok {
+		response, err := service.CapabilityTypes(ctx)
+		if err == nil {
+			types := make([]schemaBriefTypeOutput, 0, len(response.Types))
+			for _, eventType := range response.Types {
+				models, err := service.CapabilityModels(ctx, eventType.Code)
+				if err != nil {
+					return nil, err
+				}
+				types = append(types, schemaBriefTypeOutput{
+					Type:         eventType.Code,
+					DisplayName:  eventType.Name,
+					ArtifactKind: eventType.ArtifactKind,
+					Models:       models.Models,
+				})
+			}
+			return map[string]any{"ok": true, "schemaSource": "remote", "types": types}, nil
+		}
+	}
+	summaries, err := schemaRegistry(options).List()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true, "schemaSource": "local", "types": summaries}, nil
+}
+
+func capabilityTypes(ctx context.Context, options Options) (map[string]any, bool) {
+	service, ok := capabilityClient(options)
+	if !ok {
+		return nil, false
+	}
+	response, err := service.CapabilityTypes(ctx)
+	if err != nil {
+		return nil, false
+	}
+	types := make([]capabilityTypeOutput, 0, len(response.Types))
+	for _, eventType := range response.Types {
+		types = append(types, capabilityTypeOutput{
+			Type:         eventType.Code,
+			DisplayName:  eventType.Name,
+			ArtifactKind: eventType.ArtifactKind,
+		})
+	}
+	return map[string]any{"ok": true, "types": types}, true
+}
+
+func capabilityModels(ctx context.Context, options Options, eventType string) (map[string]any, error) {
+	service, ok := capabilityClient(options)
+	if !ok {
+		return nil, apperror.Usage(errdefs.CodeUsage, "provider and model are required when capability API is not configured")
+	}
+	response, err := service.CapabilityModels(ctx, eventType)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true, "type": eventType, "models": response.Models}, nil
+}
+
+func capabilityClient(options Options) (*client.Client, bool) {
+	serverURL := options.ServerURL
+	if serverURL == "" {
+		serverURL = config.Runtime().ServerURL
+	}
+	if serverURL == "" {
+		return nil, false
+	}
+	return client.New(client.Config{
+		ServerURL:  serverURL,
+		HTTPClient: options.HTTPClient,
+	}), true
 }
 
 func taskService(options Options, stderr io.Writer) task.Service {
@@ -402,7 +557,10 @@ func newGenerateCommand(name string, artifactKind string, stdout io.Writer, stde
 	var model string
 	var schemaType string
 	var inputPath string
+	var dryRun bool
 	var noWait bool
+	var outputPath string
+	var outputDir string
 	var timeoutSeconds int
 	var pollIntervalSeconds int
 	var pollMaxSeconds int
@@ -428,12 +586,15 @@ func newGenerateCommand(name string, artifactKind string, stdout io.Writer, stde
 				Model:         model,
 				Type:          schemaType,
 				InputPath:     inputPath,
+				DryRun:        dryRun,
 				Wait:          !noWait,
 				WaitSpecified: true,
 				Timeout:       time.Duration(timeoutSeconds) * time.Second,
 				PollInterval:  time.Duration(pollIntervalSeconds) * time.Second,
 				PollMax:       time.Duration(pollMaxSeconds) * time.Second,
 				PollBackoff:   pollBackoff,
+				OutputPath:    outputPath,
+				OutputDir:     outputDir,
 			})
 			if err != nil {
 				return err
@@ -445,8 +606,9 @@ func newGenerateCommand(name string, artifactKind string, stdout io.Writer, stde
 	cmd.Flags().StringVar(&model, "model", "", "Model name")
 	cmd.Flags().StringVar(&schemaType, "type", "", "Generation behavior type")
 	cmd.Flags().StringVar(&inputPath, "input", "", "JSON input file path or - for stdin")
-	cmd.Flags().String("output", "", "Artifact output file path")
-	cmd.Flags().String("output-dir", "", "Artifact output directory")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and print normalized request without submitting")
+	cmd.Flags().StringVar(&outputPath, "output", "", "Artifact output file path")
+	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Artifact output directory")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return immediately after task submission")
 	cmd.Flags().IntVar(&timeoutSeconds, "timeout", 1800, "Polling timeout in seconds")
 	cmd.Flags().IntVar(&pollIntervalSeconds, "poll-interval", 2, "Initial polling interval in seconds")
@@ -487,15 +649,21 @@ func generationService(options Options, stderr io.Writer, noJitter bool) (genera
 		serverURL = config.Runtime().ServerURL
 	}
 	return generation.NewService(generation.Options{
-		Registry:      schemaRegistry(options),
-		AssetResolver: assets.NewResolver(store, nil),
-		ServerURL:     serverURL,
-		AuthToken:     cfg.AuthToken,
-		HTTPClient:    options.HTTPClient,
-		Stdin:         stdin,
-		Stderr:        stderr,
-		TaskSleep:     options.TaskSleep,
-		TaskJitter:    jitter,
+		Registry:     schemaRegistry(options),
+		Capabilities: client.New(client.Config{ServerURL: serverURL, HTTPClient: options.HTTPClient}),
+		AssetResolver: assets.NewResolver(store, assets.HTTPUploader{
+			ServerURL:  serverURL,
+			AuthToken:  cfg.AuthToken,
+			HTTPClient: options.HTTPClient,
+		}),
+		AssetStore: store,
+		ServerURL:  serverURL,
+		AuthToken:  cfg.AuthToken,
+		HTTPClient: options.HTTPClient,
+		Stdin:      stdin,
+		Stderr:     stderr,
+		TaskSleep:  options.TaskSleep,
+		TaskJitter: jitter,
 	}), func() { _ = store.Close() }, nil
 }
 
@@ -526,14 +694,16 @@ Usage:
   pi-pro auth status
   pi-pro types list
   pi-pro types inspect --provider <provider> --model <model> --type <type>
+  pi-pro schema --brief
+  pi-pro schema inspect --provider <provider> --model <model> --type <type>
   pi-pro task status <jobId>
   pi-pro task wait <jobId>
   pi-pro task cancel <jobId>
   pi-pro generateImage --provider <provider> --model <model> --type <type>
-  pi-pro generateVoice --provider <provider> --model <model> --type <type>
   pi-pro generateVideo --provider <provider> --model <model> --type <type>
 
 Global:
   pi-pro --help
-  pi-pro --version`
+  pi-pro --version
+  pi-pro --server-url <url> <command>`
 }

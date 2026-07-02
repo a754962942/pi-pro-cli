@@ -174,6 +174,80 @@ func TestDoJSONMapsNetworkErrors(t *testing.T) {
 	}
 }
 
+func TestCapabilityTypesFetchesPublicTypes(t *testing.T) {
+	httpClient := fakeHTTPClient(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != serverapi.CapabilityTypes {
+			t.Errorf("expected %s, got %s", serverapi.CapabilityTypes, r.URL.Path)
+		}
+		return jsonResponse(http.StatusOK, `{"types":[{"code":"image-to-video","name":"首帧生视频","artifactKind":"video"}]}`), nil
+	})
+	client := New(Config{ServerURL: "https://api.example.test", HTTPClient: httpClient})
+
+	types, err := client.CapabilityTypes(context.Background())
+
+	if err != nil {
+		t.Fatalf("expected capability types, got %v", err)
+	}
+	if len(types.Types) != 1 || types.Types[0].Code != "image-to-video" || types.Types[0].Name != "首帧生视频" {
+		t.Fatalf("unexpected capability types: %#v", types)
+	}
+}
+
+func TestCapabilityModelsFetchesModelsForType(t *testing.T) {
+	httpClient := fakeHTTPClient(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != serverapi.CapabilityModels("image-to-video") {
+			t.Errorf("expected %s, got %s", serverapi.CapabilityModels("image-to-video"), r.URL.Path)
+		}
+		return jsonResponse(http.StatusOK, `{"models":[{"code":"grok-video-1.0","name":"Grok Video","modality":"video","supportedEventTypes":["image-to-video"],"providers":[{"providerCode":"grok","providerModelId":"grok-imagine-video-1.5-preview","healthStatus":"healthy"}]}]}`), nil
+	})
+	client := New(Config{ServerURL: "https://api.example.test", HTTPClient: httpClient})
+
+	models, err := client.CapabilityModels(context.Background(), "image-to-video")
+
+	if err != nil {
+		t.Fatalf("expected capability models, got %v", err)
+	}
+	if len(models.Models) != 1 ||
+		models.Models[0].Code != "grok-video-1.0" ||
+		len(models.Models[0].Providers) != 1 ||
+		models.Models[0].Providers[0].ProviderCode != "grok" {
+		t.Fatalf("unexpected capability models: %#v", models)
+	}
+}
+
+func TestSchemaFetchesRemoteSchemaByQuery(t *testing.T) {
+	httpClient := fakeHTTPClient(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != serverapi.CLISchema {
+			t.Errorf("expected %s, got %s", serverapi.CLISchema, r.URL.Path)
+		}
+		if r.URL.Query().Get("provider") != "vidu" ||
+			r.URL.Query().Get("model") != "vidu/viduq3-turbo_img2video" ||
+			r.URL.Query().Get("type") != "image-to-video" {
+			t.Fatalf("unexpected schema query: %s", r.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `{"ok":true,"schema":{"provider":"vidu","model":"vidu/viduq3-turbo_img2video","type":"image-to-video","schemaVersion":"1.0","artifactKind":"video","input":{}}}`), nil
+	})
+	client := New(Config{ServerURL: "https://api.example.test", HTTPClient: httpClient})
+
+	body, err := client.Schema(context.Background(), "vidu", "vidu/viduq3-turbo_img2video", "image-to-video")
+
+	if err != nil {
+		t.Fatalf("expected remote schema, got %v", err)
+	}
+	if !bytes.Contains(body, []byte(`"model":"vidu/viduq3-turbo_img2video"`)) {
+		t.Fatalf("unexpected schema body: %s", string(body))
+	}
+}
+
 func TestRetryableStatusClassifier(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
 		if !IsRetryableStatus(status) {

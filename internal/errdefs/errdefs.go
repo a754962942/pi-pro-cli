@@ -28,6 +28,7 @@ const (
 	CodeInvalidInputJSON                 = "INVALID_INPUT_JSON"
 	CodeValidationError                  = "VALIDATION_ERROR"
 	CodeCommandTypeMismatch              = "COMMAND_TYPE_MISMATCH"
+	CodeCapabilityUnsupported            = "CAPABILITY_UNSUPPORTED"
 	CodeMissingRequiredField             = "MISSING_REQUIRED_FIELD"
 	CodeUnknownField                     = "UNKNOWN_FIELD"
 	CodeInvalidFieldType                 = "INVALID_FIELD_TYPE"
@@ -67,6 +68,5 @@ const (
 	MessageTaskWaitNotImplemented      = "task wait command is not implemented yet"
 	MessageTaskCancelNotImplemented    = "task cancel command is not implemented yet"
 	MessageGenerateImageNotImplemented = "generateImage command is not implemented yet"
-	MessageGenerateVoiceNotImplemented = "generateVoice command is not implemented yet"
 	MessageGenerateVideoNotImplemented = "generateVideo command is not implemented yet"
 )

@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -40,8 +41,60 @@ type LocalRegistry struct {
 	root string
 }
 
+type RemoteClient interface {
+	Schema(ctx context.Context, provider string, model string, schemaType string) (json.RawMessage, error)
+}
+
+type RemoteRegistry struct {
+	ctx      context.Context
+	client   RemoteClient
+	fallback Registry
+}
+
 func NewLocalRegistry(root string) LocalRegistry {
 	return LocalRegistry{root: root}
+}
+
+func NewRemoteRegistry(ctx context.Context, client RemoteClient, fallback Registry) RemoteRegistry {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return RemoteRegistry{ctx: ctx, client: client, fallback: fallback}
+}
+
+func (r RemoteRegistry) Get(provider string, model string, schemaType string) (Schema, error) {
+	if r.client != nil {
+		body, err := r.client.Schema(r.ctx, provider, model, schemaType)
+		if err == nil {
+			selected, err := decodeSchema(body)
+			if err != nil {
+				return Schema{}, err
+			}
+			if err := validateMetadata(selected, provider, model, schemaType); err != nil {
+				return Schema{}, err
+			}
+			if err := validateShape(selected); err != nil {
+				return Schema{}, err
+			}
+			return selected, nil
+		}
+	}
+	if r.fallback != nil {
+		return r.fallback.Get(provider, model, schemaType)
+	}
+	return Schema{}, apperror.AppError{
+		Code:    errdefs.CodeSchemaNotFound,
+		Message: "schema was not found",
+		Kind:    apperror.KindValidation,
+		Details: map[string]any{"provider": provider, "model": model, "type": schemaType},
+	}
+}
+
+func (r RemoteRegistry) List() ([]Summary, error) {
+	if r.fallback == nil {
+		return []Summary{}, nil
+	}
+	return r.fallback.List()
 }
 
 func (r LocalRegistry) Get(provider string, model string, schemaType string) (Schema, error) {
@@ -129,6 +182,10 @@ func readSchema(path string) (Schema, error) {
 	if err != nil {
 		return Schema{}, err
 	}
+	return decodeSchema(data)
+}
+
+func decodeSchema(data []byte) (Schema, error) {
 	var schema Schema
 	if err := json.Unmarshal(data, &schema); err != nil {
 		return Schema{}, apperror.AppError{

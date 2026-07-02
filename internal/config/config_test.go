@@ -25,6 +25,19 @@ func TestLocalVersionCanBeInjectedAtBuildTime(t *testing.T) {
 	}
 }
 
+func TestBuiltInServerURLCanBeInjectedAtBuildTime(t *testing.T) {
+	original := BuiltInServerURL
+	t.Cleanup(func() {
+		BuiltInServerURL = original
+	})
+
+	BuiltInServerURL = "https://api.injected.example"
+
+	if Runtime().ServerURL != "https://api.injected.example" {
+		t.Fatalf("expected injected built-in server URL, got %q", Runtime().ServerURL)
+	}
+}
+
 func TestResolveConfigDirUsesEnvironmentOverride(t *testing.T) {
 	configDir := filepath.Join(t.TempDir(), "pi-pro-config")
 	t.Setenv(EnvConfigDir, configDir)
@@ -159,5 +172,15 @@ func TestRuntimeConfigUsesBuiltInServerURL(t *testing.T) {
 
 	if runtime.ServerURL != BuiltInServerURL {
 		t.Fatalf("expected built-in server URL %q, got %q", BuiltInServerURL, runtime.ServerURL)
+	}
+}
+
+func TestRuntimeConfigUsesServerURLEnvironmentOverride(t *testing.T) {
+	t.Setenv(EnvServerURL, "https://api.example.test")
+
+	runtime := Runtime()
+
+	if runtime.ServerURL != "https://api.example.test" {
+		t.Fatalf("expected env server URL override, got %q", runtime.ServerURL)
 	}
 }

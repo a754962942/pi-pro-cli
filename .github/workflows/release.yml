@@ -1,0 +1,57 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v prefix"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Build release artifacts
+        env:
+          PI_PRO_VERSION: ${{ inputs.version || github.ref_name }}
+          PI_PRO_SERVER_URL: https://api.pi-pro.org
+        run: |
+          VERSION="${PI_PRO_VERSION#v}"
+          PI_PRO_VERSION="$VERSION" sh scripts/build-release.sh
+          tar -czf "dist/releases/pi-pro-cli-${VERSION}-release.tar.gz" -C "dist/releases" "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-pro-cli-${{ env.VERSION }}-release
+          path: |
+            dist/releases/manifest.json
+            dist/releases/pi-pro-cli-${{ env.VERSION }}-release.tar.gz
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/releases/manifest.json "dist/releases/pi-pro-cli-${VERSION}-release.tar.gz" --clobber
+          else
+            gh release create "$TAG" dist/releases/manifest.json "dist/releases/pi-pro-cli-${VERSION}-release.tar.gz" --title "PI-Pro CLI ${VERSION}" --notes "PI-Pro CLI ${VERSION}"
+          fi

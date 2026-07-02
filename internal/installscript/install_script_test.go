@@ -65,6 +65,30 @@ func TestInstallScriptSendsNoLocalVersionRequest(t *testing.T) {
 	}
 }
 
+func TestInstallScriptDefaultsToProductionServerURL(t *testing.T) {
+	binary := []byte("binary")
+	fixture := installFixture(t, binary, sha256Hex(binary))
+
+	result := runInstallScript(t, t.TempDir(), fixture, nil)
+
+	if result.err != nil {
+		t.Fatalf("expected install success, got %v\nstdout=%s\nstderr=%s", result.err, result.stdout, result.stderr)
+	}
+	assertVersionURL(t, fixture, "https://api.pi-pro.org/cli/version")
+}
+
+func TestInstallScriptAllowsServerURLOverride(t *testing.T) {
+	binary := []byte("binary")
+	fixture := installFixture(t, binary, sha256Hex(binary))
+
+	result := runInstallScript(t, t.TempDir(), fixture, map[string]string{"PI_PRO_SERVER_URL": "https://api.example.test"})
+
+	if result.err != nil {
+		t.Fatalf("expected install success, got %v\nstdout=%s\nstderr=%s", result.err, result.stdout, result.stderr)
+	}
+	assertVersionURL(t, fixture, "https://api.example.test/cli/version")
+}
+
 func TestInstallScriptRejectsChecksumMismatch(t *testing.T) {
 	fixture := installFixture(t, []byte("binary"), strings.Repeat("0", 64))
 	home := t.TempDir()
@@ -115,7 +139,6 @@ func runInstallScript(t *testing.T, home string, fixture string, extra map[strin
 	cmd.Env = append(os.Environ(),
 		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PI_PRO_HOME="+home,
-		"PI_PRO_SERVER_URL=https://api.example.test",
 		"PI_PRO_OS=darwin",
 		"PI_PRO_ARCH=arm64",
 	)
@@ -152,6 +175,17 @@ func installFixture(t *testing.T, binary []byte, checksum string) string {
 	return dir
 }
 
+func assertVersionURL(t *testing.T, fixture string, expected string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(fixture, "version-url.txt"))
+	if err != nil {
+		t.Fatalf("expected captured version URL, got %v", err)
+	}
+	if actual := strings.TrimSpace(string(data)); actual != expected {
+		t.Fatalf("expected version URL %q, got %q", expected, actual)
+	}
+}
+
 func fakeCurlBin(t *testing.T, fixture string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -181,6 +215,7 @@ if [ -n "$data" ]; then
 fi
 case "$last" in
   */cli/version)
+    printf '%s\n' "$last" > "$fixture/version-url.txt"
     cat "$fixture/version.json"
     ;;
   https://download.example/pi-pro)
