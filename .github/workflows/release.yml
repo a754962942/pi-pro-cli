@@ -34,16 +34,28 @@ jobs:
         run: |
           VERSION="${PI_PRO_VERSION#v}"
           PI_PRO_VERSION="$VERSION" sh scripts/build-release.sh
-          tar -czf "dist/releases/pi-pro-cli-${VERSION}-release.tar.gz" -C "dist/releases" "$VERSION"
+          mkdir -p dist/release-assets
+          cp dist/releases/manifest.json dist/release-assets/manifest.json
+          tar -czf "dist/release-assets/pi-pro-cli-${VERSION}-release.tar.gz" -C "dist/releases" "$VERSION"
+          for platform_dir in dist/releases/"$VERSION"/*-*; do
+            platform="$(basename "$platform_dir")"
+            if [ -f "$platform_dir/pi-pro.exe" ]; then
+              cp "$platform_dir/pi-pro.exe" "dist/release-assets/pi-pro-${VERSION}-${platform}.exe"
+            else
+              cp "$platform_dir/pi-pro" "dist/release-assets/pi-pro-${VERSION}-${platform}"
+            fi
+            if [ -f "$platform_dir/pi-pro-updater.exe" ]; then
+              cp "$platform_dir/pi-pro-updater.exe" "dist/release-assets/pi-pro-updater-${VERSION}-${platform}.exe"
+            fi
+          done
+          (cd dist/release-assets && sha256sum * > SHA256SUMS)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: pi-pro-cli-${{ env.VERSION }}-release
-          path: |
-            dist/releases/manifest.json
-            dist/releases/pi-pro-cli-${{ env.VERSION }}-release.tar.gz
+          path: dist/release-assets/*
 
       - name: Publish GitHub Release
         env:
@@ -51,7 +63,7 @@ jobs:
         run: |
           TAG="v${VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/releases/manifest.json "dist/releases/pi-pro-cli-${VERSION}-release.tar.gz" --clobber
+            gh release upload "$TAG" dist/release-assets/* --clobber
           else
-            gh release create "$TAG" dist/releases/manifest.json "dist/releases/pi-pro-cli-${VERSION}-release.tar.gz" --title "PI-Pro CLI ${VERSION}" --notes "PI-Pro CLI ${VERSION}"
+            gh release create "$TAG" dist/release-assets/* --title "PI-Pro CLI ${VERSION}" --notes "PI-Pro CLI ${VERSION}"
           fi
