@@ -92,9 +92,10 @@ ensure_path() {
       printf '%s\n' "$line"
     } >> "$profile"
   fi
-  # shellcheck disable=SC1090
-  . "$profile" >/dev/null 2>&1 || true
   echo "PATH profile updated: $profile"
+  if [ -n "${SHELL:-}" ]; then
+    "$SHELL" -lc "command -v pi-pro" >/dev/null 2>&1 || true
+  fi
 }
 
 need_command curl
