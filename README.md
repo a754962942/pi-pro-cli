@@ -13,6 +13,43 @@
 
 </div>
 
+## LLM Quickstart
+
+PI-Pro CLI is intended to be operated by a coding agent or another large language model. Prefer giving the agent this README and letting it inspect schemas, choose commands, validate payloads with `--dry-run`, and execute the workflow. Human input should be limited to credentials, approval for paid provider calls, and reviewing generated artifacts.
+
+Agent runbook:
+
+```sh
+# Install. The installer defaults to https://api.pi-pro.org and writes ~/.pi-pro/bin to the shell profile.
+curl -fsSL https://raw.githubusercontent.com/a754962942/pi-pro-cli/main/scripts/install.sh | sh
+
+# Initialize local runtime files and schemas.
+pi-pro init
+
+# Authenticate once. For automation, pre-seed PI_PRO_CONFIG_DIR/config.json instead.
+pi-pro auth login
+pi-pro auth status
+
+# Discover supported generation surfaces from the server.
+pi-pro types list
+pi-pro schema --brief
+pi-pro schema inspect --provider qiling --model gpt-image-2 --type text-to-image
+pi-pro schema inspect --provider seeddance --model Seedance-2.0-fast --type text-to-video
+
+# Validate before spending provider quota.
+printf '%s\n' '{"prompt":"A small red robot holding a blue umbrella on a white desk","size":"1024x1024"}' |
+  pi-pro generateImage --provider qiling --model gpt-image-2 --type text-to-image --input - --dry-run
+
+# Real calls after approval.
+printf '%s\n' '{"prompt":"A small red robot holding a blue umbrella on a white desk","size":"1024x1024"}' |
+  pi-pro generateImage --provider qiling --model gpt-image-2 --type text-to-image --input - --output ./robot.png
+
+printf '%s\n' '{"prompt":"A six second cinematic shot of a red robot opening a blue umbrella on a rainy city sidewalk","duration":6,"resolution":"720p","ratio":"16:9"}' |
+  pi-pro generateVideo --provider seeddance --model Seedance-2.0-fast --type text-to-video --input - --output ./robot.mp4
+```
+
+Operational rule for agents: inspect `types` and `schema` first, submit JSON through `--input -`, use `--output` or `--output-dir` for artifacts, and avoid hand-editing local runtime files under `~/.pi-pro` except for pre-seeded automation auth.
+
 ## What's PI-Pro CLI?
 
 PI-Pro CLI is a lightweight command-line project for operating local AI filmmaking workflows from coding agents and terminal sessions.
